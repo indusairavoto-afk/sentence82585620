@@ -34,8 +34,59 @@ chrome.runtime.onMessageExternal.addListener(
             const isErrorPage = data.html && (data.html.includes("Can't load shared conversation") || data.html.includes("conversation you requested could not be found"));
             
             if (data.hasMessages || isErrorPage || attempts > 30) {
-              chrome.tabs.remove(tabId);
-              sendResponse({ html: data.html, success: !!data.html });
+              if (data.hasMessages && attempts <= 30) {
+                // Try scrolling down to load lazy-load messages
+                chrome.scripting.executeScript({
+                  target: { tabId: tabId },
+                  func: async () => {
+                    return new Promise((resolve) => {
+                      let lastHeight = 0;
+                      let scrollAttempts = 0;
+                      const scrollElement = document.querySelector('main') || document.body;
+                      const seenMessageIds = new Set();
+                      const allMessagesHTML = [];
+                      
+                      const collectMessages = () => {
+                        const messages = document.querySelectorAll('.font-user-message, .font-claude-message, [data-message-author-role], article, [data-testid="message"]');
+                        messages.forEach(msg => {
+                          const id = msg.id || msg.getAttribute('data-message-id') || msg.innerText.substring(0, 50);
+                          if (!seenMessageIds.has(id)) {
+                            seenMessageIds.add(id);
+                            // wrap in div just to be safe
+                            allMessagesHTML.push('<div>' + msg.outerHTML + '</div>');
+                          }
+                        });
+                      };
+
+                      const scrollInterval = setInterval(() => {
+                        collectMessages();
+                        scrollElement.scrollTo(0, scrollElement.scrollHeight);
+                        scrollAttempts++;
+                        
+                        if (scrollElement.scrollHeight === lastHeight || scrollAttempts > 20) {
+                          setTimeout(() => {
+                            collectMessages(); // final collect
+                            clearInterval(scrollInterval);
+                            resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
+                          }, 1000);
+                        } else {
+                          lastHeight = scrollElement.scrollHeight;
+                        }
+                      }, 500);
+                    });
+                  }
+                }, (finalResults) => {
+                  chrome.tabs.remove(tabId);
+                  if (finalResults && finalResults[0]) {
+                    sendResponse({ html: finalResults[0].result, success: true });
+                  } else {
+                    sendResponse({ html: data.html, success: true });
+                  }
+                });
+              } else {
+                chrome.tabs.remove(tabId);
+                sendResponse({ html: data.html, success: !!data.html });
+              }
             } else {
               setTimeout(checkReady, 500);
             }

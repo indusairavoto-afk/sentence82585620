@@ -1302,7 +1302,7 @@ export default function App() {
                             </div>
                           )}
 
-                          <div className="prose dark:prose-invert max-w-none text-sm leading-relaxed prose-p:my-2 prose-pre:my-3 prose-pre:bg-zinc-100 dark:prose-pre:bg-zinc-800 prose-pre:text-zinc-900 dark:prose-pre:text-zinc-100 prose-img:max-h-32 prose-img:object-contain prose-img:rounded-md prose-img:my-2 overflow-x-auto" dangerouslySetInnerHTML={{ __html: msg.content_html || msg.content }} />
+                          <div className="prose dark:prose-invert max-w-none text-sm leading-relaxed prose-p:my-2 prose-pre:my-3 prose-pre:bg-zinc-100 dark:prose-pre:bg-zinc-800 prose-pre:text-zinc-900 dark:prose-pre:text-zinc-100 prose-img:max-h-32 prose-img:object-contain prose-img:rounded-md prose-img:my-2 prose-table:border-collapse prose-table:w-full prose-table:my-4 prose-td:border prose-td:border-zinc-200 dark:prose-td:border-white/10 prose-td:p-3 prose-th:border prose-th:border-zinc-200 dark:prose-th:border-white/10 prose-th:p-3 prose-th:bg-zinc-100 dark:prose-th:bg-zinc-800/80 overflow-x-auto" dangerouslySetInnerHTML={{ __html: msg.content_html || msg.content }} />
 
                           {msg.content.includes('Uploaded image') && msg.role === 'user' && (!msg.images || msg.images.length === 0) && (
                             <div className="mt-3 text-xs opacity-80 bg-black/5 dark:bg-white/5 p-3 rounded-lg border border-black/10 dark:border-white/10 flex flex-col gap-1.5">
