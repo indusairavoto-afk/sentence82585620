@@ -363,17 +363,22 @@ export default function App() {
         try {
           if (extensionId && typeof window !== 'undefined' && (window as any).chrome && (window as any).chrome.runtime) {
             setUploadProgress({ phase: 'Extracting via Extension...', percent: 20 });
-            const extResponse = await new Promise<string>((resolve, reject) => {
-              (window as any).chrome.runtime.sendMessage(extensionId, { action: 'fetch_html', url: shareLink }, (response: any) => {
-                if ((window as any).chrome.runtime.lastError) {
-                  reject(new Error((window as any).chrome.runtime.lastError.message));
-                } else if (!response || !response.success || !response.html) {
-                  reject(new Error('Extension failed to extract document HTML from the page.'));
-                } else {
-                  resolve(response.html);
-                }
-              });
-            });
+            const extResponse = await Promise.race([
+              new Promise<string>((resolve, reject) => {
+                (window as any).chrome.runtime.sendMessage(extensionId, { action: 'fetch_html', url: shareLink }, (response: any) => {
+                  if ((window as any).chrome.runtime.lastError) {
+                    reject(new Error((window as any).chrome.runtime.lastError.message));
+                  } else if (!response || !response.success || !response.html) {
+                    reject(new Error('Extension failed or timed out. Please try reloading the extension in chrome://extensions or re-download it from our site.'));
+                  } else {
+                    resolve(response.html);
+                  }
+                });
+              }),
+              new Promise<string>((_, reject) => 
+                setTimeout(() => reject(new Error('Extension took too long to respond. The tab might be suspended, or you may need to re-download & reload the latest extension version.')), 25000)
+              )
+            ]);
             // Pretend it was a file upload and send HTML to standard extraction endpoint
             payload = { html: extResponse };
             endpoint = '/api/extract-html';
