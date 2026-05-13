@@ -29,7 +29,7 @@ chrome.runtime.onMessageExternal.addListener(
               return;
             }
             
-            const data = results[0].result;
+            const data = results[0].result || {};
             // Wait until messages are injected, OR if we're hitting a wall (e.g., 404, or needs login)
             const isErrorPage = data.html && (data.html.includes("Can't load shared conversation") || data.html.includes("conversation you requested could not be found"));
             
