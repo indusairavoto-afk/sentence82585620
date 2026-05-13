@@ -1,176 +1,205 @@
 chrome.runtime.onMessageExternal.addListener(
   (request, sender, sendResponse) => {
     if (request.action === 'fetch_html' && request.url) {
-      console.log('Received request to fetch:', request.url);
+      console.log('Received request to extract via network:', request.url);
       
-      // Open tab in background
+      let capturedPayloads = [];
+      let contentScriptActive = false;
+
+      // Listen for messages from the content script relay
+      const messageListener = (msg, senderProxy) => {
+        if (msg.type === "CAPTURED_CHAT_DATA" && senderProxy.tab?.id === tabId) {
+           capturedPayloads.push(msg.payload);
+        }
+      };
+      chrome.runtime.onMessage.addListener(messageListener);
+
+      let tabId = null;
+
       chrome.tabs.create({ url: request.url, active: false }, (tab) => {
-        const tabId = tab.id;
-        let attempts = 0;
+        tabId = tab.id;
         
-        const checkReady = () => {
-          chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            func: () => {
-              // Look specifically for actual message blocks, ignore skeletons
-              const hasMessages = document.querySelectorAll('.font-user-message, .font-claude-message, [data-message-author-role], article, [data-testid="message"]').length > 0;
-              return { hasMessages, html: document.documentElement.outerHTML };
-            }
-          }, (results) => {
-            attempts++;
-            if (chrome.runtime.lastError || !results || !results[0]) {
-              // Might be redirecting or not ready yet
-              if (attempts > 30) { // 15 seconds max
-                chrome.tabs.remove(tabId);
-                sendResponse({ html: null, success: false });
-              } else {
-                setTimeout(checkReady, 500);
+        let injected = false;
+        
+        // We need to inject AS SOON as the page starts navigating to the target
+        const onUpdatedListener = (uTabId, changeInfo, uTab) => {
+          if (uTabId === tabId && changeInfo.status === 'loading' && !injected) {
+            injected = true;
+            
+            // Inject the MAIN world interceptor
+            chrome.scripting.executeScript({
+              target: { tabId: tabId },
+              world: "MAIN",
+              injectImmediately: true,
+              func: () => {
+                (function () {
+                  function send(payload) {
+                    window.postMessage({ type: "AI_CHAT_CAPTURE", payload }, "*");
+                  }
+
+                  // Hook fetch
+                  const origFetch = window.fetch;
+                  window.fetch = async (...args) => {
+                    const res = await origFetch(...args);
+                    try {
+                      const clone = res.clone();
+                      clone.text().then(text => {
+                        if (text && (text.includes("message") || text.includes("content"))) {
+                          send(text);
+                        }
+                      });
+                    } catch (e) {}
+                    return res;
+                  };
+
+                  // Hook XHR
+                  const origOpen = XMLHttpRequest.prototype.open;
+                  XMLHttpRequest.prototype.open = function () {
+                    this.addEventListener("load", function () {
+                      try {
+                        const text = this.responseText;
+                        if (text && (text.includes("message") || text.includes("content"))) {
+                          send(text);
+                        }
+                      } catch (e) {}
+                    });
+                    origOpen.apply(this, arguments);
+                  };
+                })();
               }
-              return;
-            }
-            
-            const data = results[0].result || {};
-            // Wait until messages are injected, OR if we're hitting a wall (e.g., 404, or needs login)
-            const isErrorPage = data.html && (data.html.includes("Can't load shared conversation") || data.html.includes("conversation you requested could not be found"));
-            
-            if (data.hasMessages || isErrorPage || attempts > 30) {
-              if (data.hasMessages && attempts <= 30) {
-                // Try scrolling down to load lazy-load messages
-                chrome.scripting.executeScript({
-                  target: { tabId: tabId },
-                  func: async () => {
-                    return new Promise((resolve) => {
-                      const seenMessageIds = new Set();
-                      const allMessagesHTML = [];
-                      
-                      const collectMessages = () => {
-                        const messages = document.querySelectorAll('.font-user-message, .font-claude-message, [data-message-author-role], article, [data-testid="message"]');
-                        messages.forEach(msg => {
-                          const id = msg.id || msg.getAttribute('data-message-id') || (msg.innerText ? msg.innerText.substring(0, 50) : '') + '-' + msg.innerHTML.length;
-                          if (!seenMessageIds.has(id)) {
-                            seenMessageIds.add(id);
-                            allMessagesHTML.push('<div>' + msg.outerHTML + '</div>');
-                          }
-                        });
-                      };
+            }).catch(e => console.error("Interceptor inject error", e));
 
-                      const triggerScrolls = (yPos) => {
-                          try { window.scrollTo(0, yPos); } catch (e) {}
-                          const scrollers = [
-                            document.querySelector('div[class*="react-scroll-to-bottom"]'),
-                            document.querySelector('main div.flex-1.overflow-y-auto'),
-                            document.querySelector('main'),
-                            ...Array.from(document.querySelectorAll('div[class*="overflow"]'))
-                          ].filter(Boolean);
-                          for (const s of scrollers) {
-                              try { s.scrollTo(0, yPos); } catch (e) {}
-                          }
-                      };
-
-                      let upAttempts = 0;
-                      let downAttempts = 0;
-                      let downNoChangeCount = 0;
-                      
-                      const scrollDownStep = () => {
-                          collectMessages();
-                          
-                          const mainScroller = document.querySelector('div[class*="react-scroll-to-bottom"]') || 
-                                               document.querySelector('main div.flex-1.overflow-y-auto') ||
-                                               Array.from(document.querySelectorAll('div[class*="overflow"]')).sort((a,b) => b.scrollHeight - a.scrollHeight)[0] || 
-                                               document.scrollingElement || document.body;
-                          
-                          const oldHeight = mainScroller.scrollHeight;
-                          const oldTop = mainScroller.scrollTop;
-                          
-                          const yPos = oldTop + 800; // slightly bigger chunks
-                          triggerScrolls(yPos);
-                          downAttempts++;
-                          
-                          setTimeout(() => {
-                              const newHeight = mainScroller.scrollHeight;
-                              const newTop = mainScroller.scrollTop;
-                              
-                              const hitBottom = (newTop + mainScroller.clientHeight >= newHeight - 10);
-                              if (hitBottom || (newTop === oldTop && newHeight === oldHeight)) {
-                                  downNoChangeCount++;
-                              } else {
-                                  downNoChangeCount = 0;
-                              }
-                              
-                              if (downNoChangeCount >= 4 || downAttempts > 300) {
-                                  collectMessages(); // final collect
-                                  resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
-                              } else {
-                                  scrollDownStep();
-                              }
-                          }, 400); 
-                      };
-
-                      let lastUpHeight = 0;
-                      let lastUpTop = -1;
-                      let upNoChangeCount = 0;
-
-                      const scrollUpStep = () => {
-                          const mainScroller = document.querySelector('div[class*="react-scroll-to-bottom"]') || 
-                                               document.querySelector('main div.flex-1.overflow-y-auto') ||
-                                               Array.from(document.querySelectorAll('div[class*="overflow"]')).sort((a,b) => b.scrollHeight - a.scrollHeight)[0] || 
-                                               document.scrollingElement || document.body;
-                                               
-                          const currentHeight = mainScroller.scrollHeight;
-                          const currentTop = mainScroller.scrollTop;
-                          
-                          const yPos = Math.max(0, currentTop - 800);
-                          triggerScrolls(yPos);
-                          upAttempts++;
-                          
-                          if (currentTop <= 0 || (currentHeight === lastUpHeight && currentTop === lastUpTop)) {
-                              upNoChangeCount++;
-                          } else {
-                              upNoChangeCount = 0;
-                              lastUpHeight = currentHeight;
-                              lastUpTop = currentTop;
-                          }
-                          
-                          // stop jumping up if we hit the top 5 times in a row, or max 80 jumps
-                          if (upNoChangeCount >= 4 || upAttempts > 80) { 
-                             setTimeout(() => {
-                                seenMessageIds.clear();
-                                allMessagesHTML.length = 0;
-                                scrollDownStep();
-                             }, 500);
-                          } else {
-                             setTimeout(scrollUpStep, 400);
-                          }
-                      };
-                      
-                      // Start jumping up
-                      scrollUpStep();
+            // Inject the ISOLATED world relay script
+            chrome.scripting.executeScript({
+              target: { tabId: tabId },
+              world: "ISOLATED",
+              injectImmediately: true,
+              func: () => {
+                window.addEventListener("message", (event) => {
+                  if (event.data?.type === "AI_CHAT_CAPTURE") {
+                    chrome.runtime.sendMessage({
+                      type: "CAPTURED_CHAT_DATA",
+                      payload: event.data.payload
                     });
                   }
-                }, (finalResults) => {
-                  chrome.tabs.remove(tabId);
-                  if (finalResults && finalResults[0]) {
-                    sendResponse({ html: finalResults[0].result, success: true });
-                  } else {
-                    sendResponse({ html: data.html, success: true });
-                  }
                 });
-              } else {
-                chrome.tabs.remove(tabId);
-                sendResponse({ html: data.html, success: !!data.html });
               }
-            } else {
-              setTimeout(checkReady, 500);
-            }
-          });
+            }).catch(e => console.error("Relay inject error", e));
+          }
         };
 
-        // Start polling immediately
-        setTimeout(checkReady, 1000);
+        chrome.tabs.onUpdated.addListener(onUpdatedListener);
+
+        // Wait a fixed amount of time for network payloads to settle
+        // say 10 seconds for safety (since we removed DOM check and scrolling bounds)
+        setTimeout(() => {
+          chrome.tabs.onUpdated.removeListener(onUpdatedListener);
+          chrome.runtime.onMessage.removeListener(messageListener);
+          chrome.tabs.remove(tabId);
+
+          // Parse the captured payloads
+          const messages = parseJSONNetworkPayloads(capturedPayloads);
+
+          console.log("Extracted messages via network:", messages);
+
+          // Send to webapp server
+          sendResponse({ html: JSON.stringify(messages), success: messages.length > 0 });
+        }, 12000);
       });
       
-      // Return true to indicate we will send a response asynchronously
       return true;
     }
   }
 );
+
+function parseJSONNetworkPayloads(payloads) {
+  let mappedMessages = [];
+  
+  function traverse(obj) {
+    if (!obj || typeof obj !== 'object') return;
+    
+    // Check if it looks like a message
+    let roleCandidate = obj.role || obj.author?.role || obj.message?.author?.role;
+    let contentCandidate = obj.content || obj.text || obj.message?.content?.parts;
+    let idCandidate = obj.id || obj.message?.id || obj.nodeId;
+
+    if (roleCandidate && contentCandidate) {
+       let role = String(roleCandidate).toLowerCase();
+       if (role === 'human' || role === 'user') role = 'user';
+       else if (role === 'assistant' || role === 'model' || role === 'ai') role = 'assistant';
+       else role = 'system';
+       
+       let content = '';
+       if (typeof contentCandidate === 'string') {
+         content = contentCandidate;
+       } else if (Array.isArray(contentCandidate)) {
+         content = contentCandidate.map(p => typeof p === 'string' ? p : p.text || '').join('\\n');
+       } else if (typeof contentCandidate === 'object' && contentCandidate.parts) {
+         if (Array.isArray(contentCandidate.parts)) content = contentCandidate.parts.join('\\n');
+       }
+
+       if (content.trim()) {
+         mappedMessages.push({
+           id: idCandidate || Math.random().toString(),
+           role: role,
+           content: content
+         });
+       }
+    }
+
+    for (let key in obj) {
+       if (obj.hasOwnProperty(key)) {
+          traverse(obj[key]);
+       }
+    }
+  }
+
+  for (let text of payloads) {
+    if (typeof text !== 'string') continue;
+    
+    // SSE streaming extraction (data: {})
+    if (text.includes('data: {')) {
+       let lines = text.split('\\n');
+       for (let line of lines) {
+         if (line.startsWith('data: ')) {
+           try {
+             traverse(JSON.parse(line.slice(6)));
+           } catch(e) {}
+         }
+       }
+    } else {
+       try {
+         traverse(JSON.parse(text));
+       } catch(e) {
+         // Maybe there are multiple JSON objects concatenated
+         let parts = text.split(/(?=\\{)/);
+         for (let p of parts) {
+           try { traverse(JSON.parse(p)); } catch(e2) {}
+         }
+       }
+    }
+  }
+
+  // Deduplicate. SSE can cause many identical or growing messages.
+  // We map by ID if possible, otherwise by exact content.
+  // Actually, with streaming, the LAST seen message for an ID is the most complete.
+  let uniqueMap = new Map();
+  for (let m of mappedMessages) {
+    let key = m.id || m.content;
+    uniqueMap.set(key, m);
+  }
+
+  // If ids were generated randomly because no id existed, we might have dupes. Filter out by content as well.
+  let contentMap = new Map();
+  for (let m of Array.from(uniqueMap.values())) {
+    contentMap.set(m.content, m);
+  }
+
+  let finalMessages = Array.from(contentMap.values());
+  
+  // Clean up format
+  return finalMessages.map(m => ({
+     role: m.role,
+     content: m.content
+  })).filter(m => m.role !== 'system');
+}

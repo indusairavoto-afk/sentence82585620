@@ -532,9 +532,32 @@ export default function App() {
                 ),
               ),
             ]);
-            // Pretend it was a file upload and send HTML to standard extraction endpoint
-            payload = { html: extResponse };
-            endpoint = "/api/extract-html";
+            
+            if (typeof extResponse === 'string' && extResponse.trim().startsWith('[') && extResponse.trim().endsWith(']')) {
+              try {
+                 const parsedMessages = JSON.parse(extResponse);
+                 setTimeout(() => {
+                   setChatData({ title: "Imported AI Chat", messages: parsedMessages });
+                   if (action === "pdf") {
+                     setShowPdfEditor(true);
+                   }
+                   incrementGlobalStat("uses");
+                   setUploadProgress(null);
+                   setLoading(false);
+                   setShowDonationModal(true);
+                   toast.success("Successfully extracted chat!");
+                 }, 800);
+                 return; // skip the server POST
+              } catch(e) {
+                 // fallback if parse fails
+                 payload = { html: extResponse };
+                 endpoint = "/api/extract-html";
+              }
+            } else {
+              // Pretend it was a file upload and send HTML to standard extraction endpoint
+              payload = { html: extResponse };
+              endpoint = "/api/extract-html";
+            }
           } else {
             const response = await fetch("/api/extract", {
               method: "POST",
