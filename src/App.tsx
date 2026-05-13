@@ -455,7 +455,9 @@ export default function App() {
             } catch (err) {
               console.error("Failed to parse JSON response:", xhr.responseText.substring(0, 200));
               let errorMessage = "Unknown server issue.";
-              if (xhr.status === 403) errorMessage = "Request blocked.";
+              if (xhr.status === 404) errorMessage = "Endpoint not found. Make sure your server is deployed with the latest code.";
+              else if (xhr.status === 413) errorMessage = "Payload too large. File size exceeds server limits.";
+              else if (xhr.status === 403) errorMessage = "Request blocked.";
               else if (xhr.status >= 500) errorMessage = "Server error.";
               reject(new Error(`Server error (Status ${xhr.status}). ${errorMessage}`));
             }
