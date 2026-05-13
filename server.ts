@@ -606,6 +606,7 @@ export function extractMessagesFromHtml(html: string) {
   const messages: {
     role: string;
     content: string;
+    content_html?: string;
     timestamp?: string;
     imagesUrls?: string[];
   }[] = [];
@@ -1164,6 +1165,14 @@ export function extractMessagesFromHtml(html: string) {
         content = content.replace(/Uploaded an image/gi, "");
         content = content.replace(/Show moreShow less/gi, "");
 
+        let target = $clone.find('.markdown, .prose, article');
+        if (target.length === 0) {
+          target = $clone as any;
+        } else {
+          target = target.first();
+        }
+        const contentHtml = cleanHtml($, target);
+
         const imgs = $el
           .find("img")
           .filter((_, img) => {
@@ -1240,6 +1249,7 @@ export function extractMessagesFromHtml(html: string) {
           messages.push({
             role,
             content: content.trim(),
+            content_html: contentHtml,
             timestamp,
             imagesUrls: allImgs,
           });

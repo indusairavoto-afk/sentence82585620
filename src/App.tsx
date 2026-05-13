@@ -376,7 +376,7 @@ export default function App() {
                 });
               }),
               new Promise<string>((_, reject) => 
-                setTimeout(() => reject(new Error('Extension took too long to respond. The tab might be suspended, or you may need to re-download & reload the latest extension version.')), 25000)
+                setTimeout(() => reject(new Error('Extension took too long to respond. The tab might be suspended, or you may need to re-download & reload the latest extension version.')), 120000)
               )
             ]);
             // Pretend it was a file upload and send HTML to standard extraction endpoint

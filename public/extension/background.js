@@ -40,39 +40,89 @@ chrome.runtime.onMessageExternal.addListener(
                   target: { tabId: tabId },
                   func: async () => {
                     return new Promise((resolve) => {
-                      let lastHeight = 0;
-                      let scrollAttempts = 0;
-                      const scrollElement = document.querySelector('main') || document.body;
                       const seenMessageIds = new Set();
                       const allMessagesHTML = [];
                       
                       const collectMessages = () => {
                         const messages = document.querySelectorAll('.font-user-message, .font-claude-message, [data-message-author-role], article, [data-testid="message"]');
                         messages.forEach(msg => {
-                          const id = msg.id || msg.getAttribute('data-message-id') || msg.innerText.substring(0, 50);
+                          const id = msg.id || msg.getAttribute('data-message-id') || (msg.innerText ? msg.innerText.substring(0, 50) : '') + '-' + msg.innerHTML.length;
                           if (!seenMessageIds.has(id)) {
                             seenMessageIds.add(id);
-                            // wrap in div just to be safe
                             allMessagesHTML.push('<div>' + msg.outerHTML + '</div>');
                           }
                         });
                       };
 
-                      const scrollInterval = setInterval(() => {
-                        collectMessages();
-                        scrollElement.scrollTo(0, scrollElement.scrollHeight);
-                        scrollAttempts++;
-                        
-                        if (scrollElement.scrollHeight === lastHeight || scrollAttempts > 20) {
-                          setTimeout(() => {
-                            collectMessages(); // final collect
-                            clearInterval(scrollInterval);
-                            resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
-                          }, 1000);
-                        } else {
-                          lastHeight = scrollElement.scrollHeight;
+                      const findScrollContainer = () => {
+                        const main = document.querySelector('main');
+                        if (main && main.scrollHeight > main.clientHeight + 10) return main;
+                        const divs = Array.from(document.querySelectorAll('div.flex-1.overflow-y-auto, div[class*="overflow"]'));
+                        for (let d of divs) {
+                          if (d.scrollHeight > d.clientHeight + 10) return d;
                         }
-                      }, 500);
+                        return document.scrollingElement || document.body;
+                      };
+
+                      let phase = 'up'; // first scroll up to load old history
+                      let scrollAttempts = 0;
+                      let noChangeCount = 0;
+                      
+                      const scrollStep = () => {
+                        collectMessages();
+                        const scroller = findScrollContainer();
+                        const oldHeight = scroller.scrollHeight;
+                        const oldTop = scroller.scrollTop;
+
+                        if (phase === 'up') {
+                          scroller.scrollTo(0, Math.max(0, oldTop - 2000));
+                          window.scrollTo(0, Math.max(0, window.scrollY - 2000));
+                        } else {
+                          scroller.scrollTo(0, oldTop + 2000);
+                          window.scrollTo(0, window.scrollY + 2000);
+                        }
+                        
+                        scrollAttempts++;
+
+                        setTimeout(() => {
+                           const newHeight = scroller.scrollHeight;
+                           const newTop = scroller.scrollTop;
+                           
+                           // If we hit the boundary
+                           const hitBoundary = phase === 'up' ? newTop === 0 : (newTop + scroller.clientHeight >= newHeight - 10);
+                           
+                           if (hitBoundary || newHeight === oldHeight) {
+                             noChangeCount++;
+                           } else {
+                             noChangeCount = 0;
+                           }
+
+                           if (noChangeCount >= 3) {
+                             if (phase === 'up') {
+                               // Switch direction
+                               phase = 'down';
+                               noChangeCount = 0;
+                               scrollStep();
+                             } else {
+                               // Done with down as well
+                               collectMessages();
+                               resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
+                             }
+                           } else if (scrollAttempts > 150) {
+                             // Absolute fallback timeout
+                             collectMessages();
+                             resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
+                           } else {
+                             scrollStep();
+                           }
+                        }, 800);
+                      };
+                      
+                      // Start at the bottom so scrolling up has maximum effect, then down
+                      const initialScroller = findScrollContainer();
+                      initialScroller.scrollTo(0, initialScroller.scrollHeight);
+                      
+                      setTimeout(scrollStep, 500);
                     });
                   }
                 }, (finalResults) => {
