@@ -29,11 +29,11 @@ function cleanHtml($, el: any) {
       }
     }
   }
-  walk(el[0]);
+  el.each((_: number, node: any) => walk(node));
   return output;
 }
 
-const html = `<html><body><div data-message-author-role="assistant"><div class="markdown"><table><thead><tr><th>Header</th></tr></thead><tbody><tr><td>Data</td></tr></tbody></table></div></div></body></html>`;
+const html = `<html><body><div data-message-author-role="assistant"><div class="markdown"><table><thead><tr><th>Header</th></tr></thead><tbody><tr><td>Data</td></tr></tbody></table></div><div class="markdown"><p>Second paragraph!</p></div></div></body></html>`;
 
 const $ = cheerio.load(html);
 const target = $('[data-message-author-role]').find('.markdown');

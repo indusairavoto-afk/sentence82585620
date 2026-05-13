@@ -45,7 +45,7 @@ function cleanHtml($, el) {
     }
   }
   
-  $(el).contents().each((_, child) => walk(child));
+  el.each((_, node) => walk(node));
   return output.trim();
 }
 
@@ -135,8 +135,6 @@ async function extractChatViaAxios(url: string) {
     let target = $(el).find('.markdown');
     if (target.length === 0) {
       target = $(el); // fallback
-    } else {
-      target = target.first();
     }
     
     const contentHtml = cleanHtml($, target);
@@ -272,8 +270,6 @@ app.post("/api/parse", async (req, res) => {
       let target = $(el).find('.markdown');
       if (target.length === 0) {
         target = $(el) as any;
-      } else {
-        target = target.first();
       }
 
       const contentHtml = cleanHtml($, target);
@@ -1168,8 +1164,6 @@ export function extractMessagesFromHtml(html: string) {
         let target = $clone.find('.markdown, .prose, article');
         if (target.length === 0) {
           target = $clone as any;
-        } else {
-          target = target.first();
         }
         const contentHtml = cleanHtml($, target);
 
