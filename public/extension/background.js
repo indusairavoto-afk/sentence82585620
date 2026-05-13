@@ -37,6 +37,12 @@ chrome.runtime.onMessageExternal.addListener(
                     window.postMessage({ type: "AI_CHAT_CAPTURE", payload }, "*");
                   }
 
+                  // 1. Send the page source since that represents the initial network payload
+                  // which contains Server Side Rendered JSON blobs
+                  setTimeout(() => {
+                     send(document.documentElement.outerHTML);
+                  }, 1000);
+
                   // Hook fetch
                   const origFetch = window.fetch;
                   window.fetch = async (...args) => {
@@ -91,7 +97,7 @@ chrome.runtime.onMessageExternal.addListener(
         chrome.tabs.onUpdated.addListener(onUpdatedListener);
 
         // Wait a fixed amount of time for network payloads to settle
-        // say 10 seconds for safety (since we removed DOM check and scrolling bounds)
+        // 4 seconds should be enough for the initial SSR payload and any immediate fetch requests
         setTimeout(() => {
           chrome.tabs.onUpdated.removeListener(onUpdatedListener);
           chrome.runtime.onMessage.removeListener(messageListener);
@@ -104,13 +110,45 @@ chrome.runtime.onMessageExternal.addListener(
 
           // Send to webapp server
           sendResponse({ html: JSON.stringify(messages), success: messages.length > 0 });
-        }, 12000);
+        }, 4000);
       });
       
       return true;
     }
   }
 );
+
+function extractPossibleJSONs(text) {
+  let jsons = [];
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let startIdx = -1;
+  
+  for (let i = 0; i < text.length; i++) {
+    let char = text[i];
+    if (inString) {
+      if (escape) escape = false;
+      else if (char === '\\') escape = true;
+      else if (char === '"') inString = false;
+    } else {
+      if (char === '"') inString = true;
+      else if (char === '{') {
+        if (depth === 0) startIdx = i;
+        depth++;
+      } else if (char === '}') {
+        if (depth > 0) {
+          depth--;
+          if (depth === 0 && startIdx !== -1) {
+            jsons.push(text.substring(startIdx, i + 1));
+            startIdx = -1;
+          }
+        }
+      }
+    }
+  }
+  return jsons;
+}
 
 function parseJSONNetworkPayloads(payloads) {
   let mappedMessages = [];
@@ -171,11 +209,10 @@ function parseJSONNetworkPayloads(payloads) {
        try {
          traverse(JSON.parse(text));
        } catch(e) {
-         // Maybe there are multiple JSON objects concatenated
-         let parts = text.split(/(?=\\{)/);
-         for (let p of parts) {
-           try { traverse(JSON.parse(p)); } catch(e2) {}
-         }
+          let chunks = extractPossibleJSONs(text);
+          for (let c of chunks) {
+             try { traverse(JSON.parse(c)); } catch(e2) {}
+          }
        }
     }
   }
