@@ -107,6 +107,7 @@ chrome.runtime.onMessageExternal.addListener(
                       };
 
                       let lastUpHeight = 0;
+                      let lastUpTop = -1;
                       let upNoChangeCount = 0;
 
                       const scrollUpStep = () => {
@@ -116,25 +117,29 @@ chrome.runtime.onMessageExternal.addListener(
                                                document.scrollingElement || document.body;
                                                
                           const currentHeight = mainScroller.scrollHeight;
-                          triggerScrolls(0);
+                          const currentTop = mainScroller.scrollTop;
+                          
+                          const yPos = Math.max(0, currentTop - 800);
+                          triggerScrolls(yPos);
                           upAttempts++;
                           
-                          if (currentHeight === lastUpHeight) {
+                          if (currentTop <= 0 || (currentHeight === lastUpHeight && currentTop === lastUpTop)) {
                               upNoChangeCount++;
                           } else {
                               upNoChangeCount = 0;
                               lastUpHeight = currentHeight;
+                              lastUpTop = currentTop;
                           }
                           
-                          // stop jumping up if we hit the top 5 times in a row, or max 12 jumps (to prevent infinite loops)
-                          if (upNoChangeCount >= 4 || upAttempts > 15) { 
+                          // stop jumping up if we hit the top 5 times in a row, or max 80 jumps
+                          if (upNoChangeCount >= 4 || upAttempts > 80) { 
                              setTimeout(() => {
                                 seenMessageIds.clear();
                                 allMessagesHTML.length = 0;
                                 scrollDownStep();
                              }, 500);
                           } else {
-                             setTimeout(scrollUpStep, 600);
+                             setTimeout(scrollUpStep, 400);
                           }
                       };
                       
