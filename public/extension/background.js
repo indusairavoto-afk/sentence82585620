@@ -54,78 +54,92 @@ chrome.runtime.onMessageExternal.addListener(
                         });
                       };
 
-                      const findScrollContainer = () => {
-                        const main = document.querySelector('main');
-                        if (main && main.scrollHeight > main.clientHeight + 10) return main;
-                        const divs = Array.from(document.querySelectorAll('div.flex-1.overflow-y-auto, div[class*="overflow"]'));
-                        for (let d of divs) {
-                          if (d.scrollHeight > d.clientHeight + 10) return d;
-                        }
-                        return document.scrollingElement || document.body;
+                      const triggerScrolls = (yPos) => {
+                          try { window.scrollTo(0, yPos); } catch (e) {}
+                          const scrollers = [
+                            document.querySelector('div[class*="react-scroll-to-bottom"]'),
+                            document.querySelector('main div.flex-1.overflow-y-auto'),
+                            document.querySelector('main'),
+                            ...Array.from(document.querySelectorAll('div[class*="overflow"]'))
+                          ].filter(Boolean);
+                          for (const s of scrollers) {
+                              try { s.scrollTo(0, yPos); } catch (e) {}
+                          }
                       };
 
-                      let phase = 'init_up';
-                      let scrollAttempts = 0;
-                      let noChangeCount = 0;
+                      let upAttempts = 0;
+                      let downAttempts = 0;
+                      let downNoChangeCount = 0;
                       
-                      const scrollStep = () => {
-                        const scroller = findScrollContainer();
-                        const oldHeight = scroller.scrollHeight;
-                        const oldTop = scroller.scrollTop;
-
-                        if (phase === 'init_up') {
-                          scroller.scrollTo(0, Math.max(0, oldTop - 2000));
-                          window.scrollTo(0, Math.max(0, window.scrollY - 2000));
-                        } else if (phase === 'down') {
+                      const scrollDownStep = () => {
                           collectMessages();
-                          scroller.scrollTo(0, oldTop + 600);
-                          window.scrollTo(0, window.scrollY + 600);
-                        }
-                        
-                        scrollAttempts++;
+                          
+                          const mainScroller = document.querySelector('div[class*="react-scroll-to-bottom"]') || 
+                                               document.querySelector('main div.flex-1.overflow-y-auto') ||
+                                               Array.from(document.querySelectorAll('div[class*="overflow"]')).sort((a,b) => b.scrollHeight - a.scrollHeight)[0] || 
+                                               document.scrollingElement || document.body;
+                          
+                          const oldHeight = mainScroller.scrollHeight;
+                          const oldTop = mainScroller.scrollTop;
+                          
+                          const yPos = oldTop + 800; // slightly bigger chunks
+                          triggerScrolls(yPos);
+                          downAttempts++;
+                          
+                          setTimeout(() => {
+                              const newHeight = mainScroller.scrollHeight;
+                              const newTop = mainScroller.scrollTop;
+                              
+                              const hitBottom = (newTop + mainScroller.clientHeight >= newHeight - 10);
+                              if (hitBottom || (newTop === oldTop && newHeight === oldHeight)) {
+                                  downNoChangeCount++;
+                              } else {
+                                  downNoChangeCount = 0;
+                              }
+                              
+                              if (downNoChangeCount >= 4 || downAttempts > 300) {
+                                  collectMessages(); // final collect
+                                  resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
+                              } else {
+                                  scrollDownStep();
+                              }
+                          }, 400); 
+                      };
 
-                        setTimeout(() => {
-                           const newHeight = scroller.scrollHeight;
-                           const newTop = scroller.scrollTop;
-                           
-                           if (phase === 'init_up') {
-                             if (newTop <= 0 || (newTop === oldTop && newHeight === oldHeight)) {
-                               noChangeCount++;
-                             } else {
-                               noChangeCount = 0;
-                             }
-                             
-                             if (noChangeCount >= 4 || scrollAttempts > 100) {
-                               // Reached top! Clear array and start scrolling down.
-                               phase = 'down';
-                               scrollAttempts = 0;
-                               noChangeCount = 0;
-                               seenMessageIds.clear();
-                               allMessagesHTML.length = 0;
-                               scrollStep();
-                             } else {
-                               scrollStep();
-                             }
-                           } else if (phase === 'down') {
-                             const hitBottom = (newTop + scroller.clientHeight >= newHeight - 10);
-                             if (hitBottom || (newTop === oldTop && newHeight === oldHeight)) {
-                               noChangeCount++;
-                             } else {
-                               noChangeCount = 0;
-                             }
-                             
-                             if (noChangeCount >= 4 || scrollAttempts > 250) {
-                               collectMessages();
-                               resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
-                             } else {
-                               scrollStep();
-                             }
-                           }
-                        }, 400);
+                      let lastUpHeight = 0;
+                      let upNoChangeCount = 0;
+
+                      const scrollUpStep = () => {
+                          const mainScroller = document.querySelector('div[class*="react-scroll-to-bottom"]') || 
+                                               document.querySelector('main div.flex-1.overflow-y-auto') ||
+                                               Array.from(document.querySelectorAll('div[class*="overflow"]')).sort((a,b) => b.scrollHeight - a.scrollHeight)[0] || 
+                                               document.scrollingElement || document.body;
+                                               
+                          const currentHeight = mainScroller.scrollHeight;
+                          triggerScrolls(0);
+                          upAttempts++;
+                          
+                          if (currentHeight === lastUpHeight) {
+                              upNoChangeCount++;
+                          } else {
+                              upNoChangeCount = 0;
+                              lastUpHeight = currentHeight;
+                          }
+                          
+                          // stop jumping up if we hit the top 5 times in a row, or max 12 jumps (to prevent infinite loops)
+                          if (upNoChangeCount >= 4 || upAttempts > 15) { 
+                             setTimeout(() => {
+                                seenMessageIds.clear();
+                                allMessagesHTML.length = 0;
+                                scrollDownStep();
+                             }, 500);
+                          } else {
+                             setTimeout(scrollUpStep, 600);
+                          }
                       };
                       
                       // Start jumping up
-                      setTimeout(scrollStep, 200);
+                      scrollUpStep();
                     });
                   }
                 }, (finalResults) => {
