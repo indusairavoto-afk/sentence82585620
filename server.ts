@@ -600,7 +600,7 @@ function extractAllJsonObjects(text: string) {
   return results;
 }
 
-function extractMessagesFromHtml(html: string) {
+export function extractMessagesFromHtml(html: string) {
   const $ = cheerio.load(html);
 
   const messages: {
