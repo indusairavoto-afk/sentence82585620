@@ -74,30 +74,32 @@ chrome.runtime.onMessageExternal.addListener(
                         const oldHeight = scroller.scrollHeight;
                         const oldTop = scroller.scrollTop;
 
+                        // Scroll by smaller increments (600px) so we don't skip over virtualized items
                         if (phase === 'up') {
-                          scroller.scrollTo(0, Math.max(0, oldTop - 2000));
-                          window.scrollTo(0, Math.max(0, window.scrollY - 2000));
+                          scroller.scrollTo(0, Math.max(0, oldTop - 600));
+                          window.scrollTo(0, Math.max(0, window.scrollY - 600));
                         } else {
-                          scroller.scrollTo(0, oldTop + 2000);
-                          window.scrollTo(0, window.scrollY + 2000);
+                          scroller.scrollTo(0, oldTop + 600);
+                          window.scrollTo(0, window.scrollY + 600);
                         }
                         
                         scrollAttempts++;
 
                         setTimeout(() => {
+                           collectMessages();
                            const newHeight = scroller.scrollHeight;
                            const newTop = scroller.scrollTop;
                            
                            // If we hit the boundary
-                           const hitBoundary = phase === 'up' ? newTop === 0 : (newTop + scroller.clientHeight >= newHeight - 10);
+                           const hitBoundary = phase === 'up' ? newTop <= 0 : (newTop + scroller.clientHeight >= newHeight - 10);
                            
-                           if (hitBoundary || newHeight === oldHeight) {
+                           if (hitBoundary || (newTop === oldTop && newHeight === oldHeight)) {
                              noChangeCount++;
                            } else {
                              noChangeCount = 0;
                            }
 
-                           if (noChangeCount >= 3) {
+                           if (noChangeCount >= 4) {
                              if (phase === 'up') {
                                // Switch direction
                                phase = 'down';
@@ -108,14 +110,14 @@ chrome.runtime.onMessageExternal.addListener(
                                collectMessages();
                                resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
                              }
-                           } else if (scrollAttempts > 150) {
+                           } else if (scrollAttempts > 250) {
                              // Absolute fallback timeout
                              collectMessages();
                              resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
                            } else {
                              scrollStep();
                            }
-                        }, 800);
+                        }, 500);
                       };
                       
                       // Start at the bottom so scrolling up has maximum effect, then down
