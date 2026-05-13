@@ -64,21 +64,20 @@ chrome.runtime.onMessageExternal.addListener(
                         return document.scrollingElement || document.body;
                       };
 
-                      let phase = 'up'; // first scroll up to load old history
+                      let phase = 'init_up';
                       let scrollAttempts = 0;
                       let noChangeCount = 0;
                       
                       const scrollStep = () => {
-                        collectMessages();
                         const scroller = findScrollContainer();
                         const oldHeight = scroller.scrollHeight;
                         const oldTop = scroller.scrollTop;
 
-                        // Scroll by smaller increments (600px) so we don't skip over virtualized items
-                        if (phase === 'up') {
-                          scroller.scrollTo(0, Math.max(0, oldTop - 600));
-                          window.scrollTo(0, Math.max(0, window.scrollY - 600));
-                        } else {
+                        if (phase === 'init_up') {
+                          scroller.scrollTo(0, Math.max(0, oldTop - 2000));
+                          window.scrollTo(0, Math.max(0, window.scrollY - 2000));
+                        } else if (phase === 'down') {
+                          collectMessages();
                           scroller.scrollTo(0, oldTop + 600);
                           window.scrollTo(0, window.scrollY + 600);
                         }
@@ -86,45 +85,47 @@ chrome.runtime.onMessageExternal.addListener(
                         scrollAttempts++;
 
                         setTimeout(() => {
-                           collectMessages();
                            const newHeight = scroller.scrollHeight;
                            const newTop = scroller.scrollTop;
                            
-                           // If we hit the boundary
-                           const hitBoundary = phase === 'up' ? newTop <= 0 : (newTop + scroller.clientHeight >= newHeight - 10);
-                           
-                           if (hitBoundary || (newTop === oldTop && newHeight === oldHeight)) {
-                             noChangeCount++;
-                           } else {
-                             noChangeCount = 0;
-                           }
-
-                           if (noChangeCount >= 4) {
-                             if (phase === 'up') {
-                               // Switch direction
-                               phase = 'down';
+                           if (phase === 'init_up') {
+                             if (newTop <= 0 || (newTop === oldTop && newHeight === oldHeight)) {
+                               noChangeCount++;
+                             } else {
                                noChangeCount = 0;
+                             }
+                             
+                             if (noChangeCount >= 4 || scrollAttempts > 100) {
+                               // Reached top! Clear array and start scrolling down.
+                               phase = 'down';
+                               scrollAttempts = 0;
+                               noChangeCount = 0;
+                               seenMessageIds.clear();
+                               allMessagesHTML.length = 0;
                                scrollStep();
                              } else {
-                               // Done with down as well
+                               scrollStep();
+                             }
+                           } else if (phase === 'down') {
+                             const hitBottom = (newTop + scroller.clientHeight >= newHeight - 10);
+                             if (hitBottom || (newTop === oldTop && newHeight === oldHeight)) {
+                               noChangeCount++;
+                             } else {
+                               noChangeCount = 0;
+                             }
+                             
+                             if (noChangeCount >= 4 || scrollAttempts > 250) {
                                collectMessages();
                                resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
+                             } else {
+                               scrollStep();
                              }
-                           } else if (scrollAttempts > 250) {
-                             // Absolute fallback timeout
-                             collectMessages();
-                             resolve('<html>' + document.head.outerHTML + '<body>' + allMessagesHTML.join('') + '</body></html>');
-                           } else {
-                             scrollStep();
                            }
-                        }, 500);
+                        }, 400);
                       };
                       
-                      // Start at the bottom so scrolling up has maximum effect, then down
-                      const initialScroller = findScrollContainer();
-                      initialScroller.scrollTo(0, initialScroller.scrollHeight);
-                      
-                      setTimeout(scrollStep, 500);
+                      // Start jumping up
+                      setTimeout(scrollStep, 200);
                     });
                   }
                 }, (finalResults) => {
