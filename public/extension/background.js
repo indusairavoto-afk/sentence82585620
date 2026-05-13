@@ -97,7 +97,7 @@ chrome.runtime.onMessageExternal.addListener(
         chrome.tabs.onUpdated.addListener(onUpdatedListener);
 
         // Wait a fixed amount of time for network payloads to settle
-        // 4 seconds should be enough for the initial SSR payload and any immediate fetch requests
+        // 8 seconds should be enough for the initial SSR payload and any immediate fetch requests
         setTimeout(() => {
           chrome.tabs.onUpdated.removeListener(onUpdatedListener);
           chrome.runtime.onMessage.removeListener(messageListener);
@@ -108,9 +108,14 @@ chrome.runtime.onMessageExternal.addListener(
 
           console.log("Extracted messages via network:", messages);
 
-          // Send to webapp server
-          sendResponse({ html: JSON.stringify(messages), success: messages.length > 0 });
-        }, 4000);
+          if (messages.length > 0) {
+             sendResponse({ html: JSON.stringify(messages), success: true });
+          } else {
+             // fallback to returning the large payload (outerHTML) to let the server parse the DOM
+             let htmlPayload = capturedPayloads.find(p => typeof p === 'string' && (p.includes('<html') || p.includes('<!DOCTYPE'))) || "";
+             sendResponse({ html: htmlPayload, success: true });
+          }
+        }, 8000);
       });
       
       return true;
