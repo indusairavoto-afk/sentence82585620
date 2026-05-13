@@ -37,12 +37,6 @@ chrome.runtime.onMessageExternal.addListener(
                     window.postMessage({ type: "AI_CHAT_CAPTURE", payload }, "*");
                   }
 
-                  // 1. Send the page source since that represents the initial network payload
-                  // which contains Server Side Rendered JSON blobs
-                  setTimeout(() => {
-                     send(document.documentElement.outerHTML);
-                  }, 1000);
-
                   // Hook fetch
                   const origFetch = window.fetch;
                   window.fetch = async (...args) => {
@@ -97,24 +91,38 @@ chrome.runtime.onMessageExternal.addListener(
         chrome.tabs.onUpdated.addListener(onUpdatedListener);
 
         // Wait a fixed amount of time for network payloads to settle
-        // 8 seconds should be enough for the initial SSR payload and any immediate fetch requests
+        // 8 seconds should be enough for the initial network requests
         setTimeout(() => {
           chrome.tabs.onUpdated.removeListener(onUpdatedListener);
           chrome.runtime.onMessage.removeListener(messageListener);
-          chrome.tabs.remove(tabId);
+          
+          chrome.scripting.executeScript({
+            target: { tabId: tabId },
+            func: () => document.documentElement.outerHTML
+          }).then((results) => {
+            chrome.tabs.remove(tabId);
+            
+            let finalHtml = "";
+            if (results && results[0] && results[0].result) {
+               finalHtml = results[0].result;
+            }
 
-          // Parse the captured payloads
-          const messages = parseJSONNetworkPayloads(capturedPayloads);
+            // Parse the captured payloads
+            const messages = parseJSONNetworkPayloads(capturedPayloads);
 
-          console.log("Extracted messages via network:", messages);
+            console.log("Extracted messages via network:", messages);
 
-          if (messages.length > 0) {
-             sendResponse({ html: JSON.stringify(messages), success: true });
-          } else {
-             // fallback to returning the large payload (outerHTML) to let the server parse the DOM
-             let htmlPayload = capturedPayloads.find(p => typeof p === 'string' && (p.includes('<html') || p.includes('<!DOCTYPE'))) || "";
-             sendResponse({ html: htmlPayload, success: true });
-          }
+            if (messages.length > 0) {
+               sendResponse({ html: JSON.stringify(messages), success: true });
+            } else {
+               // fallback to returning the large payload (outerHTML) to let the server parse the DOM
+               sendResponse({ html: finalHtml, success: true });
+            }
+          }).catch(e => {
+            // fallback if script injection fails
+            chrome.tabs.remove(tabId);
+            sendResponse({ html: "", success: false });
+          });
         }, 8000);
       });
       
